@@ -1,0 +1,10 @@
+{
+  "name": "迷路ボール",
+  "short_name": "MazeBall",
+  "description": "スマホを傾けてボールを転がす迷路ゲーム",
+  "start_url": "./index.html",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#060d1f",
+  "theme_color": "#0a1628"
+}

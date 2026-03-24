@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0a1628">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="迷路ボール">
+<link rel="manifest" href="manifest.json">
+<title>🔵 迷路ボール</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #060d1f;
+  height: 100vh; width: 100vw;
+  display: flex; flex-direction: column;
+  font-family: 'Courier New', monospace;
+  color: #fff; overflow: hidden;
+  user-select: none; touch-action: none;
+}
+#header {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  padding: 7px 14px 5px;
+  background: rgba(0,5,25,0.88); border-bottom: 1px solid #1a3a8a;
+  flex-shrink: 0; gap: 8px;
+}
+#title { font-size: clamp(0.8rem,3.5vw,1.1rem); letter-spacing: 0.12em; color: #88ccff; text-shadow: 0 0 12px #4488ff; white-space: nowrap; }
+#timer-box { font-size: clamp(1rem,4vw,1.3rem); color: #FFD700; text-shadow: 0 0 10px #ffaa00; font-weight: bold; }
+#level-box { font-size: clamp(0.6rem,2.2vw,0.72rem); color: #5577aa; text-align:right; white-space:nowrap; }
+#canvas-wrap { position: relative; flex: 1; overflow: hidden; }
+canvas#c { display: block; width: 100%; height: 100%; }
+#zoom-btns {
+  position: absolute; top: 10px; right: 10px;
+  display: flex; flex-direction: column; gap: 6px; z-index: 10;
+}
+.zoom-btn {
+  width: 42px; height: 42px;
+  background: rgba(0,10,40,0.82); border: 1px solid #2244aa;
+  border-radius: 8px; color: #88aaff; font-size: 1.3rem;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.zoom-btn:active { background: rgba(50,100,255,0.45); }
+/* 長押し終了ボタン */
+#quit-btn {
+  width: 42px; height: 42px;
+  background: rgba(40,0,0,0.82); border: 1px solid #552222;
+  border-radius: 8px; color: #aa5555; font-size: 1.0rem;
+  cursor: pointer; display: none; align-items: center; justify-content: center;
+  position: relative; overflow: hidden; user-select: none; -webkit-user-select: none;
+}
+#quit-btn.visible { display: flex; }
+#quit-progress {
+  position: absolute; bottom: 0; left: 0; height: 4px;
+  background: #ff4444; width: 0%;
+  border-radius: 0 0 8px 8px;
+}
+#quit-toast {
+  position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+  background: rgba(30,0,0,0.92); border: 1px solid #772222;
+  border-radius: 8px; padding: 8px 18px;
+  font-size: clamp(0.7rem,2.5vw,0.82rem); color: #ffaaaa;
+  white-space: nowrap; z-index: 20;
+  opacity: 0; transition: opacity 0.2s; pointer-events: none;
+}
+#quit-toast.show { opacity: 1; }
+#minimap-wrap {
+  position: absolute; top: 10px; left: 10px; z-index: 10;
+  background: rgba(0,5,25,0.85); border: 1px solid #1a3a8a;
+  border-radius: 6px; padding: 3px;
+}
+#minimap-canvas { display: block; border-radius: 4px; }
+#minimap-label { font-size: 0.52rem; color: #334466; text-align: center; margin-top: 1px; }
+#bottom-bar {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 12px; background: rgba(0,5,25,0.88); border-top: 1px solid #1a3a8a;
+  flex-shrink: 0; gap: 8px;
+}
+#tilt-wrap { display: flex; flex-direction: column; align-items: center; gap: 1px; flex-shrink: 0; }
+#tilt-canvas { border: 1px solid #1a3a8a; border-radius: 50%; }
+#tilt-label { font-size: 0.52rem; color: #334466; }
+#mode-info { font-size: clamp(0.58rem,2vw,0.68rem); color: #445588; text-align: center; line-height: 1.55; flex: 1; white-space: pre-line; }
+#accel-btn {
+  background: rgba(20,40,100,0.5); color: #5577aa; border: 1px solid #1a3a8a;
+  border-radius: 5px; padding: 5px 10px; font-size: clamp(0.6rem,2vw,0.7rem);
+  font-family: 'Courier New', monospace; cursor: pointer; white-space: nowrap; flex-shrink: 0;
+}
+#accel-btn.active { background: rgba(50,100,255,0.4); color: #aaccff; border-color: #4488ff; }
+.overlay {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; text-align: center; padding: 20px;
+  background: rgba(4,8,30,0.93);
+}
+.ov-title { font-size: clamp(1.2rem,6vw,2.4rem); font-weight: bold; text-shadow: 0 0 28px currentColor; }
+.ov-sub { font-size: clamp(0.75rem,2.8vw,0.95rem); color: #99aabb; line-height: 1.8; max-width: 360px; }
+.ov-btn {
+  color: #fff; border-radius: 8px; padding: 10px 26px;
+  font-size: clamp(0.8rem,3vw,0.92rem); font-family: 'Courier New', monospace;
+  cursor: pointer; letter-spacing: 0.08em; min-width: 200px;
+}
+.btn-blue  { background: linear-gradient(135deg,#2255cc88,#2255cc44); border: 1px solid #4488ff; box-shadow: 0 0 14px #001144; }
+.btn-green { background: linear-gradient(135deg,#22cc6688,#22cc6644); border: 1px solid #22cc66; box-shadow: 0 0 14px #003311; }
+.btn-red   { background: linear-gradient(135deg,#cc443388,#cc443344); border: 1px solid #cc4433; box-shadow: 0 0 14px #330000; }
+.btn-gold  { background: linear-gradient(135deg,#aa880088,#aa880044); border: 1px solid #FFD700; box-shadow: 0 0 14px #332200; }
+
+/* 続きからボタン（メニュー上部） */
+#continue-card {
+  display: none;
+  background: linear-gradient(135deg, rgba(30,50,10,0.85), rgba(20,40,5,0.7));
+  border: 1px solid #44aa22; border-radius: 10px;
+  padding: 12px 18px; width: 100%; max-width: 340px;
+  cursor: pointer; text-align: left;
+  box-shadow: 0 0 16px rgba(50,180,20,0.25);
+}
+#continue-card.show { display: block; }
+#continue-card:active { background: rgba(60,120,20,0.5); }
+#continue-title { font-size: 0.95rem; color: #88ff44; font-weight: bold; margin-bottom: 4px; }
+#continue-info  { font-size: 0.7rem;  color: #668844; line-height: 1.6; }
+#continue-del   {
+  font-size: 0.62rem; color: #664422; margin-top: 6px;
+  cursor: pointer; display: inline-block; padding: 2px 6px;
+  border: 1px solid #442200; border-radius: 4px;
+}
+#continue-del:active { background: rgba(100,30,0,0.4); }
+
+/* セーブボタン（右上ズームボタン群に追加） */
+#save-btn {
+  width: 42px; height: 42px;
+  background: rgba(0,30,10,0.82); border: 1px solid #226622;
+  border-radius: 8px; color: #44bb44; font-size: 1.0rem;
+  cursor: pointer; display: none; align-items: center; justify-content: center;
+  position: relative;
+}
+#save-btn.visible { display: flex; }
+#save-btn.saved { background: rgba(20,80,20,0.82); border-color: #44ff44; color: #88ff88; }
+
+/* セーブ完了トースト */
+#save-toast {
+  position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+  background: rgba(0,30,10,0.92); border: 1px solid #336633;
+  border-radius: 8px; padding: 8px 18px;
+  font-size: clamp(0.7rem,2.5vw,0.82rem); color: #88ff88;
+  white-space: nowrap; z-index: 20;
+  opacity: 0; transition: opacity 0.25s; pointer-events: none;
+}
+#save-toast.show { opacity: 1; }
+#stage-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 8px; width: 100%; max-width: 340px; }
+.stage-card {
+  background: rgba(10,25,70,0.7); border: 1px solid #1a3a8a;
+  border-radius: 8px; padding: 9px 12px; cursor: pointer; text-align: left;
+}
+.stage-card:active { background: rgba(30,70,180,0.5); border-color: #4488ff; }
+.sc-name { font-size: 0.8rem; color: #aaccff; font-weight: bold; }
+.sc-size { font-size: 0.62rem; color: #445588; margin-top: 2px; }
+.sc-diff { font-size: 0.7rem; margin-top: 3px; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div id="title">🔵 MAZE BALL</div>
+  <div id="timer-box">0.00s</div>
+  <div id="level-box">-</div>
+</div>
+
+<div id="canvas-wrap">
+  <canvas id="c"></canvas>
+
+  <div id="zoom-btns">
+    <button class="zoom-btn" onclick="zoomIn()"    title="ズームイン">＋</button>
+    <button class="zoom-btn" onclick="zoomReset()" title="中心へ">⊙</button>
+    <button class="zoom-btn" onclick="zoomOut()"   title="ズームアウト">－</button>
+    <button id="save-btn" onclick="saveGame()" title="セーブ">💾</button>
+    <button id="quit-btn" title="長押しでセーブしてタイトルへ戻る"
+      onmousedown="startQuit()" onmouseup="cancelQuit()" onmouseleave="cancelQuit()"
+      ontouchstart="startQuit(event)" ontouchend="cancelQuit()" ontouchcancel="cancelQuit()">
+      🚪<div id="quit-progress"></div>
+    </button>
+  </div>
+  <div id="save-toast">💾 セーブしました！</div>
+  <div id="quit-toast">💾 セーブしてタイトルへ戻ります…</div>
+
+  <div id="minimap-wrap">
+    <canvas id="minimap-canvas" width="88" height="88"></canvas>
+    <div id="minimap-label">MINI MAP</div>
+  </div>
+
+  <!-- スタート -->
+  <div class="overlay" id="ov-start">
+    <div class="ov-title" style="color:#88ccff">🔵 迷路ボール</div>
+    <div class="ov-sub">スマホを<strong style="color:#fff">傾けて</strong>ボールを操作！<br>🟢スタート → ⭐ゴールを目指そう</div>
+    <div id="stage-grid">
+      <div class="stage-card" onclick="beginLevel(0)">
+        <div class="sc-name">Lv.1 入門</div><div class="sc-size">25×25マス</div><div class="sc-diff">⭐ かんたん</div>
+      </div>
+      <div class="stage-card" onclick="beginLevel(1)">
+        <div class="sc-name">Lv.2 標準</div><div class="sc-size">35×35マス</div><div class="sc-diff">⭐⭐ ふつう</div>
+      </div>
+      <div class="stage-card" onclick="beginLevel(2)">
+        <div class="sc-name">Lv.3 大迷宮</div><div class="sc-size">47×47マス</div><div class="sc-diff">⭐⭐⭐ むずい</div>
+      </div>
+      <div class="stage-card" onclick="beginLevel(3)">
+        <div class="sc-name">Lv.4 超巨大</div><div class="sc-size">71×71マス</div><div class="sc-diff">⭐⭐⭐⭐ 激むず</div>
+      </div>
+      <div class="stage-card" onclick="beginLevel(4)" style="grid-column:span 2">
+        <div class="sc-name">🎲 ランダム迷路</div><div class="sc-size">毎回違う迷路が生成！</div><div class="sc-diff">⭐⭐⭐ ランダム</div>
+      </div>
+    </div>
+    <!-- 続きからカード（セーブがある時のみ表示） -->
+    <div id="continue-card" onclick="loadGame()">
+      <div id="continue-title">▶ 続きから始める</div>
+      <div id="continue-info">読み込み中…</div>
+      <div id="continue-del" onclick="deleteSave(event)">🗑 セーブを削除</div>
+    </div>
+    <button class="ov-btn btn-blue" onclick="showHelp()">❓ 操作方法</button>
+  </div>
+
+  <!-- クリア -->
+  <div class="overlay" id="ov-clear" style="display:none">
+    <div class="ov-title" style="color:#FFD700">🎉 CLEAR!</div>
+    <div id="clear-time" style="font-size:clamp(1rem,5vw,1.7rem);color:#fff;font-weight:bold"></div>
+    <div id="clear-rank" style="font-size:clamp(0.9rem,3.5vw,1.3rem)"></div>
+    <button class="ov-btn btn-green" onclick="nextLevel()">▶ 次のステージ</button>
+    <button class="ov-btn btn-blue"  onclick="retryLevel()">↺ もう一度</button>
+    <button class="ov-btn btn-red"   onclick="backToMenu()">🏠 ステージ選択</button>
+  </div>
+
+  <!-- ヘルプ -->
+  <div class="overlay" id="ov-help" style="display:none">
+    <div class="ov-title" style="color:#88ccff;font-size:clamp(1rem,4.5vw,1.5rem)">❓ 操作方法</div>
+    <div class="ov-sub">
+📱 <strong style="color:#fff">スマホ・タブレット</strong>
+「📡センサーON」ボタンで加速度センサーON
+傾けるだけでボールが動く！
+
+💻 <strong style="color:#fff">PC・キーボード</strong>
+矢印キー または WASD で操作
+マウスドラッグでも操作可能
+
+🔍 <strong style="color:#fff">ズーム操作</strong>
+＋／－ボタン、マウスホイール
+スマホはピンチイン/アウト
+⊙ でボール中心にカメラリセット
+
+左上のミニマップで全体位置を確認！
+    </div>
+    <button class="ov-btn btn-green" onclick="hideHelp()">▶ わかった！</button>
+  </div>
+</div>
+
+<div id="bottom-bar">
+  <div id="tilt-wrap">
+    <canvas id="tilt-canvas" width="40" height="40"></canvas>
+    <div id="tilt-label">重力</div>
+  </div>
+  <div id="mode-info">⌨️ 矢印/WASDで操作
+📡右ボタンでセンサーON</div>
+  <button id="accel-btn" onclick="toggleAccel()">📡 センサーON</button>
+</div>
+
+<script>
+// =========================================================
+// キャンバス
+// =========================================================
+const canvas   = document.getElementById('c');
+const ctx      = canvas.getContext('2d');
+const mmCanvas = document.getElementById('minimap-canvas');
+const mmCtx    = mmCanvas.getContext('2d');
+const tiltC    = document.getElementById('tilt-canvas');
+const tiltCtx  = tiltC.getContext('2d');
+let W=0, H=0;
+
+function resize() {
+  const wrap = document.getElementById('canvas-wrap');
+  W = wrap.clientWidth; H = wrap.clientHeight;
+  canvas.width = W; canvas.height = H;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// =========================================================
+// 迷路生成（再帰バックトラッキング）
+// =========================================================
+function generateMaze(cols, rows) {
+  const grid    = Array.from({length:rows}, ()=>Array(cols).fill(1));
+  const visited = Array.from({length:rows}, ()=>Array(cols).fill(false));
+  function carve(c,r) {
+    visited[r][c]=true; grid[r][c]=0;
+    const dirs=[[0,-2],[0,2],[-2,0],[2,0]].sort(()=>Math.random()-0.5);
+    for(const [dc,dr] of dirs){
+      const nc=c+dc, nr=r+dr;
+      if(nc>0&&nc<cols-1&&nr>0&&nr<rows-1&&!visited[nr][nc]){
+        grid[r+dr/2][c+dc/2]=0; carve(nc,nr);
+      }
+    }
+  }
+  carve(1,1);
+  return grid;
+}
+
+// ステージ定義
+const STAGE_DEFS = [
+  {name:"Lv.1 入門",   cols:25,rows:25},
+  {name:"Lv.2 標準",   cols:35,rows:35},
+  {name:"Lv.3 大迷宮", cols:47,rows:47},
+  {name:"Lv.4 超巨大", cols:71,rows:71},
+  {name:"🎲 ランダム", cols:0, rows:0, random:true},
+];
+
+// =========================================================
+// カメラ
+// =========================================================
+const CELL_BASE = 28; // ワールド座標のセルサイズ（px）
+const ZOOM_MIN=0.22, ZOOM_MAX=3.2, ZOOM_STEP=0.22;
+let cam = {x:0, y:0, zoom:1};
+
+function zoomIn()    { cam.zoom=Math.min(ZOOM_MAX, cam.zoom+ZOOM_STEP); }
+function zoomOut()   { cam.zoom=Math.max(ZOOM_MIN, cam.zoom-ZOOM_STEP); }
+function zoomReset() { if(!level)return; cam.zoom=calcFitZoom(); cam.x=ball.x; cam.y=ball.y; }
+
+function calcFitZoom() {
+  if(!level)return 1;
+  const fx=W/(level.cols*CELL_BASE), fy=H/(level.rows*CELL_BASE);
+  return Math.min(fx,fy,1.2);
+}
+
+function updateCamera() {
+  if(!level)return;
+  cam.x += (ball.x - cam.x)*0.10;
+  cam.y += (ball.y - cam.y)*0.10;
+}
+
+// ピンチズーム
+let pinchDist=0;
+canvas.addEventListener('touchstart',e=>{
+  if(e.touches.length===2) pinchDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+},{passive:true});
+canvas.addEventListener('touchmove',e=>{
+  if(e.touches.length===2){
+    const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+    cam.zoom=Math.max(ZOOM_MIN,Math.min(ZOOM_MAX,cam.zoom+(d-pinchDist)*0.004));
+    pinchDist=d; e.preventDefault();
+  }
+},{passive:false});
+canvas.addEventListener('wheel',e=>{
+  cam.zoom=Math.max(ZOOM_MIN,Math.min(ZOOM_MAX,cam.zoom-e.deltaY*0.001));
+  e.preventDefault();
+},{passive:false});
+
+// =========================================================
+// ゲーム状態
+// =========================================================
+let level=null, CELL=CELL_BASE;
+let ball={x:0,y:0,vx:0,vy:0,r:0};
+let grav={x:0,y:0};
+let gameState='start';
+let startTime=0, elapsed=0;
+let particles=[], trail=[];
+let accelEnabled=false;
+let keys={}, drag={active:false,sx:0,sy:0};
+let currentLevelIdx=0;
+let visitedCells=null; // 通過済みセルマップ（2次元配列）
+const SAVE_KEY='mazeball_save';
+
+function initLevel(def) {
+  let cols=def.cols, rows=def.rows;
+  if(def.random){ const s=[35,41,47,53][Math.floor(Math.random()*4)]; cols=s; rows=s; }
+  CELL=CELL_BASE;
+  level={ cols,rows, grid:generateMaze(cols,rows), name:def.name,
+    start:{col:1,row:1}, goal:{col:cols-2,row:rows-2} };
+  ball.r=CELL*0.30;
+  ball.x=(level.start.col+0.5)*CELL;
+  ball.y=(level.start.row+0.5)*CELL;
+  ball.vx=0; ball.vy=0;
+  cam.x=ball.x; cam.y=ball.y; cam.zoom=calcFitZoom();
+  startTime=performance.now(); elapsed=0;
+  particles=[]; trail=[]; grav={x:0,y:0};
+  // 通過済みマップ初期化
+  visitedCells = Array.from({length:rows}, ()=>Array(cols).fill(0));
+  document.getElementById('level-box').textContent=def.name;
+}
+
+// =========================================================
+// 入力
+// =========================================================
+async function toggleAccel() {
+  if(accelEnabled){
+    accelEnabled=false;
+    document.getElementById('accel-btn').textContent='📡 センサーON';
+    document.getElementById('accel-btn').classList.remove('active');
+    document.getElementById('mode-info').textContent='⌨️ 矢印/WASDで操作\n📡右ボタンでセンサーON';
+    return;
+  }
+  if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function'){
+    try{
+      const r=await DeviceMotionEvent.requestPermission();
+      if(r!=='granted'){ alert('センサーの許可が必要です。\nSafari設定 → モーションと画面の向きへのアクセス → ON'); return; }
+    }catch(e){}
+  }
+  accelEnabled=true;
+  document.getElementById('accel-btn').textContent='📡 センサーOFF';
+  document.getElementById('accel-btn').classList.add('active');
+  document.getElementById('mode-info').textContent='📱 傾けてボールを操作！\nピンチで拡大縮小もできる';
+}
+
+window.addEventListener('devicemotion',e=>{
+  if(!accelEnabled)return;
+  const ax=e.accelerationIncludingGravity?.x??0;
+  const ay=e.accelerationIncludingGravity?.y??0;
+  grav.x=ax*0.052; grav.y=-ay*0.052;
+});
+
+window.addEventListener('keydown',e=>{
+  keys[e.key]=true;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
+  if(e.key==='+'||e.key==='=')zoomIn();
+  if(e.key==='-')zoomOut();
+  if(e.key==='0')zoomReset();
+});
+window.addEventListener('keyup',e=>{keys[e.key]=false;});
+
+canvas.addEventListener('mousedown',e=>{drag={active:true,sx:e.clientX,sy:e.clientY};});
+window.addEventListener('mousemove',e=>{
+  if(!drag.active||accelEnabled)return;
+  grav.x=Math.max(-1,Math.min(1,(e.clientX-drag.sx)/170));
+  grav.y=Math.max(-1,Math.min(1,(e.clientY-drag.sy)/170));
+});
+window.addEventListener('mouseup',()=>{ drag.active=false; if(!accelEnabled)grav={x:0,y:0}; });
+
+canvas.addEventListener('touchstart',e=>{
+  if(e.touches.length!==1)return;
+  drag={active:true,sx:e.touches[0].clientX,sy:e.touches[0].clientY};
+},{passive:true});
+window.addEventListener('touchmove',e=>{
+  if(e.touches.length!==1||!drag.active||accelEnabled)return;
+  grav.x=Math.max(-1,Math.min(1,(e.touches[0].clientX-drag.sx)/170));
+  grav.y=Math.max(-1,Math.min(1,(e.touches[0].clientY-drag.sy)/170));
+},{passive:true});
+window.addEventListener('touchend',()=>{ drag.active=false; if(!accelEnabled)grav={x:0,y:0}; });
+
+// =========================================================
+// 物理
+// =========================================================
+const G_SCALE=0.40, FRICTION=0.987, BOUNCE=0.28;
+
+function updateKeyGravity(){
+  if(accelEnabled)return;
+  const sp=0.024,mx=0.9;
+  if(keys['ArrowLeft'] ||keys['a']||keys['A'])grav.x=Math.max(-mx,grav.x-sp);
+  if(keys['ArrowRight']||keys['d']||keys['D'])grav.x=Math.min( mx,grav.x+sp);
+  if(keys['ArrowUp']   ||keys['w']||keys['W'])grav.y=Math.max(-mx,grav.y-sp);
+  if(keys['ArrowDown'] ||keys['s']||keys['S'])grav.y=Math.min( mx,grav.y+sp);
+  const anyX=keys['ArrowLeft']||keys['ArrowRight']||keys['a']||keys['A']||keys['d']||keys['D'];
+  const anyY=keys['ArrowUp']  ||keys['ArrowDown'] ||keys['w']||keys['W']||keys['s']||keys['S'];
+  if(!anyX&&!drag.active)grav.x*=0.86;
+  if(!anyY&&!drag.active)grav.y*=0.86;
+}
+
+function physicsStep(){
+  ball.vx += grav.x * G_SCALE;
+  ball.vy += grav.y * G_SCALE;
+  ball.vx *= FRICTION;
+  ball.vy *= FRICTION;
+
+  // 速度上限：1フレームでセル幅の0.8倍以上移動しないよう制限
+  const MAX_SPEED = CELL * 0.8;
+  const spd = Math.hypot(ball.vx, ball.vy);
+  if (spd > MAX_SPEED) {
+    ball.vx = ball.vx / spd * MAX_SPEED;
+    ball.vy = ball.vy / spd * MAX_SPEED;
+  }
+
+  // サブステップ分割：速度が大きいほど細かく刻んで壁抜けを防止
+  const steps = Math.max(1, Math.ceil(spd / (ball.r * 0.8)));
+  const dx = ball.vx / steps;
+  const dy = ball.vy / steps;
+
+  for (let i = 0; i < steps; i++) {
+    ball.x += dx; resolveWalls('x');
+    ball.y += dy; resolveWalls('y');
+  }
+
+  trail.push({x:ball.x, y:ball.y});
+  if (trail.length > 45) trail.shift();
+
+  // 通過済みセルを記録（ボール中心のセル＋隣接通路も薄く染める）
+  if (visitedCells) {
+    const cc = Math.floor(ball.x / CELL);
+    const cr = Math.floor(ball.y / CELL);
+    for (let dr=-1; dr<=1; dr++) for (let dc=-1; dc<=1; dc++) {
+      const nr=cr+dr, nc=cc+dc;
+      if (nr>=0&&nr<level.rows&&nc>=0&&nc<level.cols&&level.grid[nr][nc]===0) {
+        // 中心セルは最大1.0、隣接は0.35まで
+        const maxV = (dr===0&&dc===0) ? 1.0 : 0.35;
+        visitedCells[nr][nc] = Math.min(maxV, (visitedCells[nr][nc]||0) + 0.06);
+      }
+    }
+  }
+
+  // ゴール判定
+  const gc = level.goal;
+  const gx = (gc.col+0.5)*CELL, gy = (gc.row+0.5)*CELL;
+  if (Math.hypot(ball.x-gx, ball.y-gy) < CELL*0.44) onClear();
+}
+
+function resolveWalls(axis){
+  const r = ball.r;
+  // 判定範囲をボール半径分広げて取りこぼしを防ぐ
+  const c0 = Math.floor((ball.x - r) / CELL);
+  const c1 = Math.ceil( (ball.x + r) / CELL);
+  const r0 = Math.floor((ball.y - r) / CELL);
+  const r1 = Math.ceil( (ball.y + r) / CELL);
+
+  for (let row=r0; row<=r1; row++) {
+    for (let col=c0; col<=c1; col++) {
+      if (row<0||row>=level.rows||col<0||col>=level.cols) continue;
+      if (level.grid[row][col] !== 1) continue;
+      const wx=col*CELL, wy=row*CELL;
+      // ボール中心からAABB壁への最近接点
+      const cx = Math.max(wx, Math.min(wx+CELL, ball.x));
+      const cy = Math.max(wy, Math.min(wy+CELL, ball.y));
+      const dx = ball.x - cx, dy = ball.y - cy;
+      const dist = Math.hypot(dx, dy);
+      if (dist < r && dist > 0) {
+        const nx = dx/dist, ny = dy/dist;
+        // めり込み量を完全に押し戻す
+        ball.x = cx + nx * r;
+        ball.y = cy + ny * r;
+        // 衝突面方向の速度成分のみ反転（摩擦あり）
+        if (axis === 'x') {
+          if (ball.vx * nx < 0) ball.vx = -ball.vx * BOUNCE;
+        } else {
+          if (ball.vy * ny < 0) ball.vy = -ball.vy * BOUNCE;
+        }
+      } else if (dist === 0) {
+        // 完全に壁の中に入ってしまった場合（稀）：強制脱出
+        ball.x = wx + CELL/2;
+        ball.y = wy + CELL/2;
+        ball.vx = 0; ball.vy = 0;
+      }
+    }
+  }
+  // 迷路外境界
+  if (ball.x - r < 0)               { ball.x = r;                    ball.vx =  Math.abs(ball.vx)*BOUNCE; }
+  if (ball.x + r > level.cols*CELL) { ball.x = level.cols*CELL - r;  ball.vx = -Math.abs(ball.vx)*BOUNCE; }
+  if (ball.y - r < 0)               { ball.y = r;                    ball.vy =  Math.abs(ball.vy)*BOUNCE; }
+  if (ball.y + r > level.rows*CELL) { ball.y = level.rows*CELL - r;  ball.vy = -Math.abs(ball.vy)*BOUNCE; }
+}
+
+// =========================================================
+// パーティクル
+// =========================================================
+function spawnClear(){
+  for(let i=0;i<80;i++){
+    const a=Math.random()*Math.PI*2,sp=2+Math.random()*6;
+    particles.push({x:ball.x,y:ball.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-2.5,
+      life:1,decay:0.012+Math.random()*0.018,r:3+Math.random()*5,
+      color:`hsl(${Math.random()*360},100%,65%)`});
+  }
+}
+function updateParticles(){
+  particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=0.1;p.vx*=0.97;p.vy*=0.97;p.life-=p.decay;});
+  particles=particles.filter(p=>p.life>0);
+}
+
+// =========================================================
+// 描画（ワールド座標）
+// =========================================================
+function drawScene(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#060d1f';
+  ctx.fillRect(0,0,W,H);
+  if(!level)return;
+
+  ctx.save();
+  ctx.translate(W/2,H/2);
+  ctx.scale(cam.zoom,cam.zoom);
+  ctx.translate(-cam.x,-cam.y);
+
+  // カリング範囲
+  const iz=1/cam.zoom;
+  const wx0=cam.x-(W/2)*iz-CELL, wy0=cam.y-(H/2)*iz-CELL;
+  const wx1=cam.x+(W/2)*iz+CELL, wy1=cam.y+(H/2)*iz+CELL;
+  const c0=Math.max(0,Math.floor(wx0/CELL));
+  const c1=Math.min(level.cols-1,Math.ceil(wx1/CELL));
+  const r0=Math.max(0,Math.floor(wy0/CELL));
+  const r1=Math.min(level.rows-1,Math.ceil(wy1/CELL));
+
+  // セル描画
+  for(let row=r0;row<=r1;row++) for(let col=c0;col<=c1;col++){
+    const x=col*CELL,y=row*CELL;
+    if(level.grid[row][col]===1){
+      ctx.fillStyle='#1a3a8a'; ctx.fillRect(x,y,CELL,CELL);
+      ctx.fillStyle='rgba(100,160,255,0.16)'; ctx.fillRect(x,y,CELL,2); ctx.fillRect(x,y,2,CELL);
+      ctx.fillStyle='rgba(0,0,40,0.3)'; ctx.fillRect(x+CELL-2,y,2,CELL); ctx.fillRect(x,y+CELL-2,CELL,2);
+    } else {
+      // 通路ベース
+      ctx.fillStyle='#0c1b3e'; ctx.fillRect(x,y,CELL,CELL);
+      // 通過済み着色
+      if(visitedCells && visitedCells[row][col]>0){
+        const v = visitedCells[row][col];
+        // 青→シアン→緑へのグラデーション（v: 0→1）
+        const r_ = Math.round(10  + v * 20);
+        const g_ = Math.round(80  + v * 100);
+        const b_ = Math.round(120 + v * 80);
+        ctx.fillStyle=`rgba(${r_},${g_},${b_},${Math.min(0.55, v*0.6)})`;
+        ctx.fillRect(x,y,CELL,CELL);
+      }
+      ctx.strokeStyle='rgba(25,55,110,0.45)'; ctx.lineWidth=0.5;
+      ctx.strokeRect(x+0.5,y+0.5,CELL-1,CELL-1);
+    }
+  }
+
+  // スタート
+  const ss=level.start, sx=(ss.col+0.5)*CELL, sy=(ss.row+0.5)*CELL;
+  ctx.beginPath(); ctx.arc(sx,sy,CELL*0.3,0,Math.PI*2);
+  ctx.fillStyle='rgba(40,180,90,0.22)'; ctx.fill();
+  ctx.strokeStyle='#44ff88'; ctx.lineWidth=1.5; ctx.stroke();
+  if(cam.zoom>0.38){
+    ctx.font=`${CELL*0.5}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('🟢',sx,sy);
+  }
+
+  // ゴール（点滅）
+  const gc=level.goal, gx=(gc.col+0.5)*CELL, gy=(gc.row+0.5)*CELL;
+  const pulse=0.5+0.5*Math.sin(performance.now()*0.004);
+  const gg=ctx.createRadialGradient(gx,gy,0,gx,gy,CELL*0.7);
+  gg.addColorStop(0,`rgba(255,220,0,${0.5*pulse})`); gg.addColorStop(1,'rgba(255,200,0,0)');
+  ctx.beginPath(); ctx.arc(gx,gy,CELL*0.7,0,Math.PI*2); ctx.fillStyle=gg; ctx.fill();
+  if(cam.zoom>0.32){
+    ctx.font=`${CELL*0.55}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('⭐',gx,gy);
+  }
+  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+
+  // トレイル
+  if(trail.length>1){
+    for(let i=1;i<trail.length;i++){
+      const a=(i/trail.length)*0.33;
+      ctx.beginPath(); ctx.moveTo(trail[i-1].x,trail[i-1].y); ctx.lineTo(trail[i].x,trail[i].y);
+      ctx.strokeStyle=`rgba(80,160,255,${a})`; ctx.lineWidth=ball.r*0.75*(i/trail.length);
+      ctx.lineCap='round'; ctx.stroke();
+    }
+  }
+
+  // ボール
+  const {x,y,r}=ball;
+  const glow=ctx.createRadialGradient(x,y,0,x,y,r*3);
+  glow.addColorStop(0,'rgba(100,180,255,0.28)'); glow.addColorStop(1,'rgba(50,100,255,0)');
+  ctx.beginPath(); ctx.arc(x,y,r*3,0,Math.PI*2); ctx.fillStyle=glow; ctx.fill();
+  const bg=ctx.createRadialGradient(x-r*0.3,y-r*0.35,r*0.04,x,y,r);
+  bg.addColorStop(0,'#e8f4ff'); bg.addColorStop(0.35,'#5599ff');
+  bg.addColorStop(0.75,'#2255cc'); bg.addColorStop(1,'#001144');
+  ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fillStyle=bg; ctx.fill();
+  ctx.beginPath(); ctx.arc(x-r*0.28,y-r*0.32,r*0.22,0,Math.PI*2);
+  ctx.fillStyle='rgba(255,255,255,0.65)'; ctx.fill();
+
+  // パーティクル
+  particles.forEach(p=>{
+    ctx.globalAlpha=p.life;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r*p.life,0,Math.PI*2);
+    ctx.fillStyle=p.color; ctx.fill();
+  });
+  ctx.globalAlpha=1;
+
+  ctx.restore();
+}
+
+// =========================================================
+// ミニマップ
+// =========================================================
+function drawMinimap(){
+  if(!level){
+    // レベルがない時（タイトル画面）はミニマップを暗くクリア
+    mmCtx.clearRect(0,0,mmCanvas.width,mmCanvas.height);
+    mmCtx.fillStyle='#060d1f';
+    mmCtx.fillRect(0,0,mmCanvas.width,mmCanvas.height);
+    return;
+  }
+  const {cols,rows,grid,goal,start}=level;
+  const mw=88,mh=88;
+  mmCanvas.width=mw; mmCanvas.height=mh;
+  const cw=mw/cols,ch=mh/rows;
+  mmCtx.fillStyle='#060d1f'; mmCtx.fillRect(0,0,mw,mh);
+  for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+    if(grid[r][c]===1){ mmCtx.fillStyle='#1a3a8a'; mmCtx.fillRect(c*cw,r*ch,cw,ch); }
+  }
+  // ゴール
+  mmCtx.fillStyle='#FFD700'; mmCtx.fillRect(goal.col*cw,goal.row*ch,cw,ch);
+  // 通過済みトレイル
+  if(trail.length>0){
+    mmCtx.strokeStyle='rgba(80,150,255,0.5)'; mmCtx.lineWidth=1; mmCtx.beginPath();
+    trail.forEach((p,i)=>{
+      const tx=p.x/CELL*cw, ty=p.y/CELL*ch;
+      i===0?mmCtx.moveTo(tx,ty):mmCtx.lineTo(tx,ty);
+    });
+    mmCtx.stroke();
+  }
+  // ボール
+  const bx=ball.x/CELL*cw, by=ball.y/CELL*ch;
+  mmCtx.beginPath(); mmCtx.arc(bx,by,Math.max(1.8,cw*0.8),0,Math.PI*2);
+  mmCtx.fillStyle='#55aaff'; mmCtx.fill();
+  // 視野範囲枠
+  const iz=1/cam.zoom;
+  const vx0=(cam.x-(W/2)*iz)/CELL*cw, vy0=(cam.y-(H/2)*iz)/CELL*ch;
+  const vw=(W*iz)/CELL*cw, vh=(H*iz)/CELL*ch;
+  mmCtx.strokeStyle='rgba(100,200,255,0.55)'; mmCtx.lineWidth=1;
+  mmCtx.strokeRect(vx0,vy0,vw,vh);
+}
+
+// =========================================================
+// 傾きインジケーター
+// =========================================================
+function drawTiltIndicator(){
+  const r=16,cx=20,cy=20;
+  tiltC.width=tiltC.width;
+  tiltCtx.beginPath(); tiltCtx.arc(cx,cy,r,0,Math.PI*2);
+  tiltCtx.fillStyle='rgba(0,5,30,0.88)'; tiltCtx.fill();
+  tiltCtx.strokeStyle='#1a3a8a'; tiltCtx.lineWidth=1.5; tiltCtx.stroke();
+  tiltCtx.strokeStyle='rgba(100,150,255,0.3)'; tiltCtx.lineWidth=1;
+  tiltCtx.beginPath(); tiltCtx.moveTo(cx-r,cy); tiltCtx.lineTo(cx+r,cy); tiltCtx.stroke();
+  tiltCtx.beginPath(); tiltCtx.moveTo(cx,cy-r); tiltCtx.lineTo(cx,cy+r); tiltCtx.stroke();
+  const mx=Math.max(-1,Math.min(1,grav.x))*(r-5);
+  const my=Math.max(-1,Math.min(1,grav.y))*(r-5);
+  const gd=tiltCtx.createRadialGradient(cx+mx,cy+my,0,cx+mx,cy+my,5.5);
+  gd.addColorStop(0,'#fff'); gd.addColorStop(0.5,'#55aaff'); gd.addColorStop(1,'rgba(85,170,255,0)');
+  tiltCtx.beginPath(); tiltCtx.arc(cx+mx,cy+my,5.5,0,Math.PI*2);
+  tiltCtx.fillStyle=gd; tiltCtx.fill();
+}
+
+// =========================================================
+// セーブ・ロード（localStorage）
+// =========================================================
+function saveGame() {
+  if (!level || gameState !== 'playing') return;
+  const data = {
+    levelIdx: currentLevelIdx,
+    levelName: level.name,
+    cols: level.cols, rows: level.rows,
+    grid: level.grid,
+    ballX: ball.x, ballY: ball.y,
+    elapsed: performance.now() - startTime,
+    trail: trail.slice(-20),
+    visitedCells: visitedCells, // 通過済みマップも保存
+    savedAt: new Date().toLocaleString('ja-JP'),
+  };
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  } catch(e) {
+    showSaveToast('⚠️ セーブに失敗しました', '#ff8844');
+    return;
+  }
+  // ボタン演出
+  const btn = document.getElementById('save-btn');
+  btn.classList.add('saved');
+  btn.textContent = '✓';
+  setTimeout(() => { btn.classList.remove('saved'); btn.textContent = '💾'; }, 1500);
+  showSaveToast('💾 セーブしました！', '#88ff88');
+}
+
+function showSaveToast(msg, color) {
+  const t = document.getElementById('save-toast');
+  t.textContent = msg;
+  t.style.color = color || '#88ff88';
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+function loadGame() {
+  const raw = localStorage.getItem(SAVE_KEY);
+  if (!raw) return;
+  let data;
+  try { data = JSON.parse(raw); } catch(e) { return; }
+
+  currentLevelIdx = data.levelIdx;
+  CELL = CELL_BASE;
+  level = {
+    cols: data.cols, rows: data.rows,
+    grid: data.grid, name: data.levelName,
+    start: {col:1, row:1},
+    goal:  {col: data.cols-2, row: data.rows-2},
+  };
+  ball.r  = CELL * 0.30;
+  ball.x  = data.ballX;
+  ball.y  = data.ballY;
+  ball.vx = 0; ball.vy = 0;
+  trail   = data.trail || [];
+  particles = [];
+  grav    = {x:0, y:0};
+  // 通過済みマップ復元（なければ新規作成）
+  visitedCells = data.visitedCells ||
+    Array.from({length: data.rows}, ()=>Array(data.cols).fill(0));
+  // 経過時間を引き継ぎ
+  startTime = performance.now() - (data.elapsed || 0);
+  elapsed   = data.elapsed || 0;
+  cam.x = ball.x; cam.y = ball.y;
+  cam.zoom = calcFitZoom();
+
+  document.getElementById('level-box').textContent = data.levelName;
+  document.getElementById('ov-start').style.display = 'none';
+  document.getElementById('quit-btn').classList.add('visible');
+  document.getElementById('save-btn').classList.add('visible');
+  document.getElementById('minimap-wrap').style.display='';
+  document.getElementById('zoom-btns').style.display='';
+  gameState = 'playing';
+}
+
+function deleteSave(e) {
+  e.stopPropagation(); // カードクリックを止める
+  if (!confirm('セーブデータを削除しますか？')) return;
+  localStorage.removeItem(SAVE_KEY);
+  refreshContinueCard();
+}
+
+function refreshContinueCard() {
+  const raw = localStorage.getItem(SAVE_KEY);
+  const card = document.getElementById('continue-card');
+  if (!raw) { card.classList.remove('show'); return; }
+  let data;
+  try { data = JSON.parse(raw); } catch(e) { card.classList.remove('show'); return; }
+  document.getElementById('continue-info').textContent =
+    `${data.levelName}　経過 ${(data.elapsed/1000).toFixed(1)}s\n保存日時: ${data.savedAt}`;
+  card.classList.add('show');
+}
+
+// =========================================================
+// ゲーム制御
+// =========================================================
+function beginLevel(idx){
+  currentLevelIdx=idx;
+  document.getElementById('ov-start').style.display='none';
+  initLevel(STAGE_DEFS[idx]);
+  gameState='playing';
+  document.getElementById('quit-btn').classList.add('visible');
+  document.getElementById('save-btn').classList.add('visible');
+  // ゲーム中はミニマップ枠とズームボタンを表示
+  document.getElementById('minimap-wrap').style.display='';
+  document.getElementById('zoom-btns').style.display='';
+}
+
+function onClear(){
+  if(gameState!=='playing')return;
+  gameState='clear';
+  elapsed=performance.now()-startTime;
+  spawnClear();
+  // クリア時はセーブデータを削除
+  localStorage.removeItem(SAVE_KEY);
+  document.getElementById('save-btn').classList.remove('visible');
+  document.getElementById('clear-time').textContent=`⏱ ${(elapsed/1000).toFixed(2)}s`;
+  const d=level.cols*level.rows;
+  const rank=elapsed<d*38?'🥇 GOLD！素晴らしい！':elapsed<d*75?'🥈 SILVER！上手い！':elapsed<d*130?'🥉 BRONZE！クリア！':'✅ CLEAR！諦めなかった！';
+  document.getElementById('clear-rank').textContent=rank;
+  setTimeout(()=>{ document.getElementById('ov-clear').style.display='flex'; },900);
+}
+
+function nextLevel(){
+  document.getElementById('ov-clear').style.display='none';
+  beginLevel((currentLevelIdx+1)%STAGE_DEFS.length);
+}
+function retryLevel(){
+  document.getElementById('ov-clear').style.display='none';
+  beginLevel(currentLevelIdx);
+}
+function backToMenu(){
+  // すべてのオーバーレイを確実に非表示
+  document.getElementById('ov-clear').style.display='none';
+  document.getElementById('ov-help').style.display='none';
+  document.getElementById('ov-start').style.display='flex';
+  document.getElementById('quit-btn').classList.remove('visible');
+  document.getElementById('save-btn').classList.remove('visible');
+  // トースト・進捗バーもリセット
+  cancelQuit();
+  document.getElementById('save-toast').classList.remove('show');
+  // タイマー表示リセット
+  document.getElementById('timer-box').textContent='0.00s';
+  document.getElementById('level-box').textContent='-';
+  refreshContinueCard();
+  level=null; gameState='start';
+  visitedCells=null;
+  // キャンバスを完全にクリア
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#060d1f';
+  ctx.fillRect(0,0,W,H);
+  // ミニマップもクリア
+  mmCtx.clearRect(0,0,mmCanvas.width,mmCanvas.height);
+  mmCtx.fillStyle='#060d1f';
+  mmCtx.fillRect(0,0,mmCanvas.width,mmCanvas.height);
+  // タイトル中はミニマップ枠とズームボタンを非表示
+  document.getElementById('minimap-wrap').style.display='none';
+  document.getElementById('zoom-btns').style.display='none';
+}
+function showHelp(){
+  document.getElementById('ov-start').style.display='none';
+  document.getElementById('ov-help').style.display='flex';
+}
+function hideHelp(){
+  document.getElementById('ov-help').style.display='none';
+  document.getElementById('ov-start').style.display='flex';
+}
+
+// =========================================================
+// 長押し終了ボタン
+// =========================================================
+const QUIT_DURATION = 1200; // 長押し時間(ms)
+let quitTimer = null;
+let quitStart = 0;
+let quitRaf   = null;
+
+function startQuit(e) {
+  if (e) e.preventDefault();
+  if (gameState !== 'playing') return;
+  quitStart = performance.now();
+  const prog  = document.getElementById('quit-progress');
+  const toast = document.getElementById('quit-toast');
+  prog.style.transition = 'none';
+  prog.style.width = '0%';
+  toast.classList.add('show');
+
+  function animProg() {
+    const pct = Math.min(100, (performance.now() - quitStart) / QUIT_DURATION * 100);
+    prog.style.width = pct + '%';
+    if (pct < 100) { quitRaf = requestAnimationFrame(animProg); }
+  }
+  quitRaf = requestAnimationFrame(animProg);
+
+  quitTimer = setTimeout(() => {
+    cancelQuit();
+    // 自動セーブしてからタイトルへ戻る
+    saveGame();
+    showSaveToast('💾 セーブしてタイトルへ戻ります', '#88ff88');
+    setTimeout(() => backToMenu(), 900);
+  }, QUIT_DURATION);
+}
+
+function cancelQuit() {
+  if (quitTimer) { clearTimeout(quitTimer); quitTimer = null; }
+  if (quitRaf)   { cancelAnimationFrame(quitRaf); quitRaf = null; }
+  const prog = document.getElementById('quit-progress');
+  const toast = document.getElementById('quit-toast');
+  prog.style.transition = 'width 0.2s ease';
+  prog.style.width = '0%';
+  toast.classList.remove('show');
+}
+
+// =========================================================
+// メインループ
+// =========================================================
+function loop(){
+  if(gameState==='playing'&&level){
+    updateKeyGravity();
+    physicsStep();
+    updateParticles();
+    updateCamera();
+    elapsed=performance.now()-startTime;
+    document.getElementById('timer-box').textContent=(elapsed/1000).toFixed(2)+'s';
+  }
+  drawScene();
+  drawMinimap();
+  drawTiltIndicator();
+  requestAnimationFrame(loop);
+}
+
+// =========================================================
+// 起動処理（全宣言・関数定義の後に実行）
+// =========================================================
+// タイトル画面では不要なUIを非表示
+document.getElementById('minimap-wrap').style.display='none';
+document.getElementById('zoom-btns').style.display='none';
+refreshContinueCard(); // セーブデータ確認してメニューに表示
+loop();
+
+// Service Worker 登録（GitHub Pages経由でhttpsの場合のみ有効）
+// ローカルファイルやiOSの制限環境では自動スキップ
+if ('serviceWorker' in navigator && location.protocol === 'https:' && location.hostname !== 'localhost') {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(() => {}) // 成功時は何もしない
+      .catch(() => {}); // 失敗時も無視（エラー表示しない）
+  });
+}
+</script>
+</body>
+</html>
