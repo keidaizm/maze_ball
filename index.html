@@ -372,6 +372,8 @@ let accelEnabled=false;
 let keys={}, drag={active:false,sx:0,sy:0};
 let currentLevelIdx=0;
 let visitedCells=null; // 通過済みセルマップ（2次元配列）
+let warpCooldown=0;    // ワープクールダウン（フレーム数）
+let trapCooldown=0;    // 落とし穴クールダウン（フレーム数）
 const SAVE_KEY='mazeball_save';
 
 function initLevel(def) {
@@ -389,6 +391,7 @@ function initLevel(def) {
   cam.x=ball.x; cam.y=ball.y; cam.zoom=calcFitZoom();
   startTime=performance.now(); elapsed=0;
   particles=[]; trail=[]; grav={x:0,y:0};
+  warpCooldown=0; trapCooldown=0;
   visitedCells = Array.from({length:rows}, ()=>Array(cols).fill(0));
 
   // ギミック配置（レベル1は少なめ、高レベルほど増加）
@@ -631,35 +634,44 @@ function physicsStep(){
   // 回転壁の角度更新
   for(const rot of level.rotators) rot.angle += rot.speed;
 
-  // 落とし穴判定
+  // ボールのいるセル座標（落とし穴・ワープ共通）
   const bc = Math.floor(ball.x/CELL), br = Math.floor(ball.y/CELL);
-  for(const trap of level.traps){
-    if(trap.col===bc && trap.row===br){
-      // 落下演出してスタートに戻す
-      spawnTrapParticles();
-      setTimeout(()=>{
-        ball.x=(level.start.col+0.5)*CELL;
-        ball.y=(level.start.row+0.5)*CELL;
-        ball.vx=0; ball.vy=0;
-        trail=[];
-      }, 300);
-      break;
+
+  // 落とし穴判定（クールダウン中はスキップ）
+  if(trapCooldown > 0){
+    trapCooldown--;
+  } else {
+    for(const trap of level.traps){
+      if(trap.col===bc && trap.row===br){
+        spawnTrapParticles();
+        trapCooldown=120; // 約2秒間無効
+        setTimeout(()=>{
+          ball.x=(level.start.col+0.5)*CELL;
+          ball.y=(level.start.row+0.5)*CELL;
+          ball.vx=0; ball.vy=0;
+          trail=[];
+        }, 300);
+        break;
+      }
     }
   }
 
-  // ワープ判定
-  for(const warp of level.warps){
-    // A→B
-    if(warp.a.col===bc && warp.a.row===br){
-      ball.x=(warp.b.col+0.5)*CELL; ball.y=(warp.b.row+0.5)*CELL;
-      ball.vx=0; ball.vy=0; trail=[];
-      spawnWarpParticles(warp.color); break;
-    }
-    // B→A
-    if(warp.b.col===bc && warp.b.row===br){
-      ball.x=(warp.a.col+0.5)*CELL; ball.y=(warp.a.row+0.5)*CELL;
-      ball.vx=0; ball.vy=0; trail=[];
-      spawnWarpParticles(warp.color); break;
+  // ワープ判定（クールダウン中はスキップ）
+  if(warpCooldown > 0){
+    warpCooldown--;
+  } else {
+    for(const warp of level.warps){
+      let dest=null;
+      if(warp.a.col===bc && warp.a.row===br) dest=warp.b;
+      else if(warp.b.col===bc && warp.b.row===br) dest=warp.a;
+      if(dest){
+        ball.x=(dest.col+0.5)*CELL;
+        ball.y=(dest.row+0.5)*CELL;
+        ball.vx=0; ball.vy=0; trail=[];
+        spawnWarpParticles(warp.color);
+        warpCooldown=90; // 約1.5秒間ワープ無効（60fps基準）
+        break;
+      }
     }
   }
 
