@@ -193,16 +193,16 @@ canvas#c { display: block; width: 100%; height: 100%; }
     <div class="ov-sub">スマホを<strong style="color:#fff">傾けて</strong>ボールを操作！<br>🟢スタート → ⭐ゴールを目指そう</div>
     <div id="stage-grid">
       <div class="stage-card" onclick="beginLevel(0)">
-        <div class="sc-name">Lv.1 入門</div><div class="sc-size">25×25マス</div><div class="sc-diff">⭐ かんたん</div>
+        <div class="sc-name">Lv.1 入門</div><div class="sc-size">25×25マス</div><div class="sc-diff">⭐ 落とし穴・ワープあり</div>
       </div>
       <div class="stage-card" onclick="beginLevel(1)">
-        <div class="sc-name">Lv.2 標準</div><div class="sc-size">35×35マス</div><div class="sc-diff">⭐⭐ ふつう</div>
+        <div class="sc-name">Lv.2 標準</div><div class="sc-size">35×35マス</div><div class="sc-diff">⭐⭐ 落とし穴・ワープ増加</div>
       </div>
       <div class="stage-card" onclick="beginLevel(2)">
-        <div class="sc-name">Lv.3 大迷宮</div><div class="sc-size">47×47マス</div><div class="sc-diff">⭐⭐⭐ むずい</div>
+        <div class="sc-name">Lv.3 大迷宮</div><div class="sc-size">47×47マス</div><div class="sc-diff">⭐⭐⭐ 回転壁も登場！</div>
       </div>
       <div class="stage-card" onclick="beginLevel(3)">
-        <div class="sc-name">Lv.4 超巨大</div><div class="sc-size">71×71マス</div><div class="sc-diff">⭐⭐⭐⭐ 激むず</div>
+        <div class="sc-name">Lv.4 超巨大</div><div class="sc-size">71×71マス</div><div class="sc-diff">⭐⭐⭐⭐ 全ギミック・激むず</div>
       </div>
       <div class="stage-card" onclick="beginLevel(4)" style="grid-column:span 2">
         <div class="sc-name">🎲 ランダム迷路</div><div class="sc-size">毎回違う迷路が生成！</div><div class="sc-diff">⭐⭐⭐ ランダム</div>
@@ -242,7 +242,11 @@ canvas#c { display: block; width: 100%; height: 100%; }
 🔍 <strong style="color:#fff">ズーム操作</strong>
 ＋／－ボタン、マウスホイール
 スマホはピンチイン/アウト
-⊙ でボール中心にカメラリセット
+
+⚠️ <strong style="color:#fff">ギミック</strong>
+🕳 落とし穴…踏むとスタートに戻る
+🌀 ワープ…同じ色の出口に飛ぶ
+🔴 回転壁…当たると弾かれる！
 
 左上のミニマップで全体位置を確認！
     </div>
@@ -255,8 +259,8 @@ canvas#c { display: block; width: 100%; height: 100%; }
     <canvas id="tilt-canvas" width="40" height="40"></canvas>
     <div id="tilt-label">重力</div>
   </div>
-  <div id="mode-info">⌨️ 矢印/WASDで操作
-📡右ボタンでセンサーON</div>
+  <div id="mode-info">📡 センサーONボタンで傾き操作
+✋ ドラッグでも操作できます</div>
   <button id="accel-btn" onclick="toggleAccel()">📡 センサーON</button>
 </div>
 
@@ -273,12 +277,18 @@ const tiltCtx  = tiltC.getContext('2d');
 let W=0, H=0;
 
 function resize() {
-  const wrap = document.getElementById('canvas-wrap');
-  W = wrap.clientWidth; H = wrap.clientHeight;
+  const header = document.getElementById('header');
+  const bottom = document.getElementById('bottom-bar');
+  W = window.innerWidth;
+  H = window.innerHeight - header.offsetHeight - bottom.offsetHeight;
   canvas.width = W; canvas.height = H;
+  // canvas-wrapの高さも明示的に設定
+  document.getElementById('canvas-wrap').style.height = H + 'px';
 }
 resize();
 window.addEventListener('resize', resize);
+// orientationchange時も再計算（スマホ回転対応）
+window.addEventListener('orientationchange', () => setTimeout(resize, 200));
 
 // =========================================================
 // 迷路生成（再帰バックトラッキング）
@@ -368,8 +378,10 @@ function initLevel(def) {
   let cols=def.cols, rows=def.rows;
   if(def.random){ const s=[35,41,47,53][Math.floor(Math.random()*4)]; cols=s; rows=s; }
   CELL=CELL_BASE;
-  level={ cols,rows, grid:generateMaze(cols,rows), name:def.name,
-    start:{col:1,row:1}, goal:{col:cols-2,row:rows-2} };
+  const grid = generateMaze(cols,rows);
+  level={ cols,rows, grid, name:def.name,
+    start:{col:1,row:1}, goal:{col:cols-2,row:rows-2},
+    traps:[], warps:[], rotators:[] };
   ball.r=CELL*0.30;
   ball.x=(level.start.col+0.5)*CELL;
   ball.y=(level.start.row+0.5)*CELL;
@@ -377,10 +389,112 @@ function initLevel(def) {
   cam.x=ball.x; cam.y=ball.y; cam.zoom=calcFitZoom();
   startTime=performance.now(); elapsed=0;
   particles=[]; trail=[]; grav={x:0,y:0};
-  // 通過済みマップ初期化
   visitedCells = Array.from({length:rows}, ()=>Array(cols).fill(0));
+
+  // ギミック配置（レベル1は少なめ、高レベルほど増加）
+  const difficulty = Math.min(currentLevelIdx, 3);
+  placeTrapAndWarps(cols, rows, grid, difficulty);
+
   document.getElementById('level-box').textContent=def.name;
 }
+
+// 行き止まりセル（隣接する通路が1方向のみ）を全て取得
+function findDeadEnds(cols, rows, grid) {
+  const deadEnds = [];
+  const sc=level.start.col, sr=level.start.row;
+  const gc=level.goal.col,  gr=level.goal.row;
+  for(let r=1;r<rows-1;r++) for(let c=1;c<cols-1;c++){
+    if(grid[r][c]!==0) continue;
+    // スタート・ゴール付近は除外
+    if(Math.abs(c-sc)<3 && Math.abs(r-sr)<3) continue;
+    if(Math.abs(c-gc)<3 && Math.abs(r-gr)<3) continue;
+    // 上下左右で通路に繋がっている方向を数える
+    const neighbors =
+      (grid[r-1][c]===0?1:0) +
+      (grid[r+1][c]===0?1:0) +
+      (grid[r][c-1]===0?1:0) +
+      (grid[r][c+1]===0?1:0);
+    if(neighbors===1) deadEnds.push({col:c, row:r});
+  }
+  // シャッフル
+  for(let i=deadEnds.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [deadEnds[i],deadEnds[j]]=[deadEnds[j],deadEnds[i]];
+  }
+  return deadEnds;
+}
+
+function placeTrapAndWarps(cols, rows, grid, difficulty) {
+  const used = new Set();
+  used.add(`${level.start.col},${level.start.row}`);
+  used.add(`${level.goal.col},${level.goal.row}`);
+
+  // 行き止まりセルを取得（落とし穴・ワープ用）
+  const deadEnds = findDeadEnds(cols, rows, grid);
+  let deIdx = 0; // 使用インデックス
+
+  function nextDeadEnd() {
+    while(deIdx < deadEnds.length){
+      const p = deadEnds[deIdx++];
+      const key = `${p.col},${p.row}`;
+      if(!used.has(key)){ used.add(key); return p; }
+    }
+    return null; // 行き止まりが足りない場合はnull
+  }
+
+  // 落とし穴（行き止まりに設置）
+  const trapCount = [2,4,6,9][difficulty];
+  for(let i=0;i<trapCount;i++){
+    const pos = nextDeadEnd();
+    if(pos) level.traps.push(pos);
+  }
+
+  // ワープペア（行き止まりにペアで設置）
+  const warpColors = ['#ff44aa','#44ffcc','#ffaa00','#aa44ff'];
+  const warpCount = [1,2,3,4][difficulty];
+  for(let i=0;i<warpCount;i++){
+    const a = nextDeadEnd();
+    const b = nextDeadEnd();
+    if(a&&b) level.warps.push({a, b, color: warpColors[i], id:i});
+  }
+
+  // 回転壁：Lv3以上のみ、速度固定
+  const rotCount = [0, 0, 2, 3][difficulty];
+  const ROT_SPEED = 0.6 * Math.PI / 180;
+
+  for(let i=0;i<rotCount;i++){
+    let placed=false, tries=0;
+    while(!placed && tries++<400){
+      // 中心候補（端から3マス以上内側）
+      const cc = 3+Math.floor(Math.random()*(cols-6));
+      const cr = 3+Math.floor(Math.random()*(rows-6));
+      // スタート・ゴール付近は除外
+      if(Math.abs(cc-level.start.col)<6 && Math.abs(cr-level.start.row)<6) continue;
+      if(Math.abs(cc-level.goal.col)<6  && Math.abs(cr-level.goal.row)<6)  continue;
+      // 他の回転壁と近すぎる場合は除外
+      let tooClose=false;
+      for(const r of level.rotators){
+        if(Math.abs(cc-r.col)<5 && Math.abs(cr-r.row)<5){ tooClose=true; break; }
+      }
+      if(tooClose) continue;
+      // 3×3エリアがusedに含まれていないことを確認
+      let ok=true;
+      for(let dr=-1;dr<=1&&ok;dr++) for(let dc=-1;dc<=1&&ok;dc++){
+        if(used.has(`${cc+dc},${cr+dr}`)) ok=false;
+      }
+      if(!ok) continue;
+
+      // ✅ 配置決定：3×3エリアを強制的に通路に開ける
+      for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
+        grid[cr+dr][cc+dc] = 0; // 壁を通路に変換
+        used.add(`${cc+dc},${cr+dr}`);
+      }
+      level.rotators.push({ col:cc, row:cr, angle:Math.random()*Math.PI*2, speed: ROT_SPEED });
+      placed=true;
+    }
+  }
+}
+
 
 // =========================================================
 // 入力
@@ -393,16 +507,32 @@ async function toggleAccel() {
     document.getElementById('mode-info').textContent='⌨️ 矢印/WASDで操作\n📡右ボタンでセンサーON';
     return;
   }
-  if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function'){
+
+  // iOS Safari: requestPermission が必要
+  if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){
     try{
-      const r=await DeviceMotionEvent.requestPermission();
-      if(r!=='granted'){ alert('センサーの許可が必要です。\nSafari設定 → モーションと画面の向きへのアクセス → ON'); return; }
-    }catch(e){}
+      const r = await DeviceMotionEvent.requestPermission();
+      if(r!=='granted'){
+        alert('センサーの許可が必要です。\nSafari設定 → モーションと画面の向きへのアクセス → ON');
+        return;
+      }
+    } catch(e) {
+      // 許可ダイアログが出ない環境はそのまま続行
+    }
   }
-  accelEnabled=true;
+  // Android Chrome / iOS Chrome はそのまま使用可能（許可不要）
+  // センサーが実際に動くか30フレーム試してチェック
+  accelEnabled = true;
   document.getElementById('accel-btn').textContent='📡 センサーOFF';
   document.getElementById('accel-btn').classList.add('active');
-  document.getElementById('mode-info').textContent='📱 傾けてボールを操作！\nピンチで拡大縮小もできる';
+  document.getElementById('mode-info').textContent='📱 傾けてボールを操作中！';
+
+  // センサーが取得できているか確認（2秒後）
+  const checkTimer = setTimeout(()=>{
+    if(accelEnabled && Math.abs(grav.x)<0.001 && Math.abs(grav.y)<0.01){
+      document.getElementById('mode-info').textContent='⚠️ センサー未検出\nドラッグで操作してください';
+    }
+  }, 2000);
 }
 
 window.addEventListener('devicemotion',e=>{
@@ -485,19 +615,56 @@ function physicsStep(){
   trail.push({x:ball.x, y:ball.y});
   if (trail.length > 45) trail.shift();
 
-  // 通過済みセルを記録（ボール中心のセル＋隣接通路も薄く染める）
+  // 通過済みセルを記録
   if (visitedCells) {
     const cc = Math.floor(ball.x / CELL);
     const cr = Math.floor(ball.y / CELL);
     for (let dr=-1; dr<=1; dr++) for (let dc=-1; dc<=1; dc++) {
       const nr=cr+dr, nc=cc+dc;
       if (nr>=0&&nr<level.rows&&nc>=0&&nc<level.cols&&level.grid[nr][nc]===0) {
-        // 中心セルは最大1.0、隣接は0.35まで
         const maxV = (dr===0&&dc===0) ? 1.0 : 0.35;
         visitedCells[nr][nc] = Math.min(maxV, (visitedCells[nr][nc]||0) + 0.06);
       }
     }
   }
+
+  // 回転壁の角度更新
+  for(const rot of level.rotators) rot.angle += rot.speed;
+
+  // 落とし穴判定
+  const bc = Math.floor(ball.x/CELL), br = Math.floor(ball.y/CELL);
+  for(const trap of level.traps){
+    if(trap.col===bc && trap.row===br){
+      // 落下演出してスタートに戻す
+      spawnTrapParticles();
+      setTimeout(()=>{
+        ball.x=(level.start.col+0.5)*CELL;
+        ball.y=(level.start.row+0.5)*CELL;
+        ball.vx=0; ball.vy=0;
+        trail=[];
+      }, 300);
+      break;
+    }
+  }
+
+  // ワープ判定
+  for(const warp of level.warps){
+    // A→B
+    if(warp.a.col===bc && warp.a.row===br){
+      ball.x=(warp.b.col+0.5)*CELL; ball.y=(warp.b.row+0.5)*CELL;
+      ball.vx=0; ball.vy=0; trail=[];
+      spawnWarpParticles(warp.color); break;
+    }
+    // B→A
+    if(warp.b.col===bc && warp.b.row===br){
+      ball.x=(warp.a.col+0.5)*CELL; ball.y=(warp.a.row+0.5)*CELL;
+      ball.vx=0; ball.vy=0; trail=[];
+      spawnWarpParticles(warp.color); break;
+    }
+  }
+
+  // 回転壁とボールの衝突（OBBベース）
+  for(const rot of level.rotators) resolveRotatorBlocks(rot);
 
   // ゴール判定
   const gc = level.goal;
@@ -558,6 +725,86 @@ function spawnClear(){
     particles.push({x:ball.x,y:ball.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-2.5,
       life:1,decay:0.012+Math.random()*0.018,r:3+Math.random()*5,
       color:`hsl(${Math.random()*360},100%,65%)`});
+  }
+}
+
+function spawnTrapParticles(){
+  for(let i=0;i<30;i++){
+    const a=Math.random()*Math.PI*2, sp=1+Math.random()*4;
+    particles.push({x:ball.x,y:ball.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp+2,
+      life:1, decay:0.03+Math.random()*0.03, r:2+Math.random()*3,
+      color:`hsl(${20+Math.random()*30},100%,55%)`});
+  }
+}
+
+function spawnWarpParticles(color){
+  for(let i=0;i<25;i++){
+    const a=Math.random()*Math.PI*2, sp=1+Math.random()*5;
+    particles.push({x:ball.x,y:ball.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,
+      life:1, decay:0.025+Math.random()*0.025, r:2+Math.random()*4,
+      color});
+  }
+}
+
+// 回転壁：十字5ブロックの中心ワールド座標リストを返す（描画・衝突共用）
+function getRotatorBlocks(rot){
+  const cx = (rot.col + 0.5) * CELL;
+  const cy = (rot.row + 0.5) * CELL;
+  const cos = Math.cos(rot.angle);
+  const sin = Math.sin(rot.angle);
+  // 十字の5セル（中心＋上下左右）のローカルオフセット
+  const offsets = [
+    { dx:  0,    dy:  0    }, // 中心
+    { dx:  0,    dy: -CELL }, // 上
+    { dx:  0,    dy:  CELL }, // 下
+    { dx: -CELL, dy:  0    }, // 左
+    { dx:  CELL, dy:  0    }, // 右
+  ];
+  return offsets.map(o => {
+    // ローカル→ワールド回転変換
+    const rx = o.dx * cos - o.dy * sin;
+    const ry = o.dx * sin + o.dy * cos;
+    return {
+      // ブロックの中心ワールド座標
+      cx: cx + rx,
+      cy: cy + ry,
+    };
+  });
+}
+
+// 回転ブロック（AABB）とボールのOBB衝突判定
+function resolveRotatorBlocks(rot){
+  const blocks = getRotatorBlocks(rot);
+  const halfC = CELL / 2;
+  for(const blk of blocks){
+    // ボールをブロックのローカル座標（回転逆変換）へ
+    const dx = ball.x - blk.cx;
+    const dy = ball.y - blk.cy;
+    const cos = Math.cos(-rot.angle);
+    const sin = Math.sin(-rot.angle);
+    const lx =  dx * cos - dy * sin;
+    const ly =  dx * sin + dy * cos;
+    // ローカルAABB最近接点
+    const nearX = Math.max(-halfC, Math.min(halfC, lx));
+    const nearY = Math.max(-halfC, Math.min(halfC, ly));
+    const penX = lx - nearX, penY = ly - nearY;
+    const dist = Math.hypot(penX, penY);
+    if(dist < ball.r && dist > 0){
+      // 押し戻し方向をワールド座標に戻す
+      const nx = penX / dist, ny = penY / dist;
+      const cos2 = Math.cos(rot.angle), sin2 = Math.sin(rot.angle);
+      const wnx = nx * cos2 - ny * sin2;
+      const wny = nx * sin2 + ny * cos2;
+      const push = ball.r - dist;
+      ball.x += wnx * push;
+      ball.y += wny * push;
+      const dot = ball.vx * wnx + ball.vy * wny;
+      if(dot < 0){
+        ball.vx -= 2 * dot * wnx * 0.55;
+        ball.vy -= 2 * dot * wny * 0.55;
+      }
+      ball.vx *= 0.78; ball.vy *= 0.78;
+    }
   }
 }
 function updateParticles(){
@@ -621,6 +868,112 @@ function drawScene(){
   if(cam.zoom>0.38){
     ctx.font=`${CELL*0.5}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.fillText('🟢',sx,sy);
+  }
+
+  // 落とし穴（明確なデザイン）
+  for(const trap of level.traps){
+    const tx=trap.col*CELL, ty=trap.row*CELL;
+    if(tx<wx0-CELL||tx>wx1+CELL||ty<wy0-CELL||ty>wy1+CELL) continue;
+    const cx=tx+CELL/2, cy=ty+CELL/2;
+    // 黒い穴の背景
+    ctx.fillStyle='#000008';
+    ctx.fillRect(tx,ty,CELL,CELL);
+    // 警告の黄黒ボーダー
+    const stripeW=CELL*0.18;
+    const stripes=['#ffcc00','#111111'];
+    for(let s=0;s<4;s++){
+      ctx.fillStyle=stripes[s%2];
+      ctx.fillRect(tx+s*stripeW, ty, stripeW, CELL*0.12);         // 上
+      ctx.fillRect(tx+s*stripeW, ty+CELL*0.88, stripeW, CELL*0.12); // 下
+      ctx.fillRect(tx,          ty+s*stripeW, CELL*0.12, stripeW); // 左
+      ctx.fillRect(tx+CELL*0.88,ty+s*stripeW, CELL*0.12, stripeW); // 右
+    }
+    // 穴の渦巻き（同心円）
+    for(let ri=3;ri>=1;ri--){
+      ctx.beginPath();
+      ctx.arc(cx,cy,CELL*0.15*ri,0,Math.PI*2);
+      ctx.strokeStyle=`rgba(80,40,40,${0.15*ri})`;
+      ctx.lineWidth=1; ctx.stroke();
+    }
+    // 中心の暗い円
+    const gTrap=ctx.createRadialGradient(cx,cy,0,cx,cy,CELL*0.38);
+    gTrap.addColorStop(0,'rgba(0,0,0,0.95)');
+    gTrap.addColorStop(1,'rgba(40,10,10,0.3)');
+    ctx.beginPath(); ctx.arc(cx,cy,CELL*0.38,0,Math.PI*2);
+    ctx.fillStyle=gTrap; ctx.fill();
+    // アイコン
+    if(cam.zoom>0.4){
+      ctx.font=`${Math.max(8,CELL*0.42)}px serif`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('🕳',cx,cy);
+    }
+  }
+
+  // ワープ（ペアで色を合わせた点滅円）
+  for(const warp of level.warps){
+    const pulse=0.6+0.4*Math.sin(performance.now()*0.006+warp.id*1.5);
+    for(const pos of [warp.a, warp.b]){
+      const wx_=pos.col*CELL+CELL/2, wy_=pos.row*CELL+CELL/2;
+      if(wx_<wx0||wx_>wx1||wy_<wy0||wy_>wy1) continue;
+      const gw=ctx.createRadialGradient(wx_,wy_,0,wx_,wy_,CELL*0.5);
+      gw.addColorStop(0, warp.color+'dd');
+      gw.addColorStop(1, warp.color+'00');
+      ctx.beginPath(); ctx.arc(wx_,wy_,CELL*0.5*pulse,0,Math.PI*2);
+      ctx.fillStyle=gw; ctx.fill();
+      ctx.beginPath(); ctx.arc(wx_,wy_,CELL*0.3,0,Math.PI*2);
+      ctx.strokeStyle=warp.color; ctx.lineWidth=2; ctx.stroke();
+      if(cam.zoom>0.45){
+        ctx.font=`${CELL*0.45}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText('🌀',wx_,wy_);
+      }
+    }
+  }
+
+  // 回転する十字壁（3×3グリッドベース）
+  for(const rot of level.rotators){
+    const baseCx=(rot.col+0.5)*CELL, baseCy=(rot.row+0.5)*CELL;
+    if(baseCx<wx0-CELL*3||baseCx>wx1+CELL*3||baseCy<wy0-CELL*3||baseCy>wy1+CELL*3) continue;
+    const blocks = getRotatorBlocks(rot);
+    ctx.save();
+    ctx.translate(baseCx, baseCy);
+    ctx.rotate(rot.angle);
+    // 十字5ブロックを描画（ローカル座標で）
+    const offsets=[
+      {dx:0,    dy:0   }, // 中心
+      {dx:0,    dy:-CELL}, // 上
+      {dx:0,    dy: CELL}, // 下
+      {dx:-CELL,dy:0   }, // 左
+      {dx: CELL,dy:0   }, // 右
+    ];
+    const halfC = CELL/2;
+    for(const o of offsets){
+      const bx=o.dx-halfC, by=o.dy-halfC;
+      // ブロック本体グラデーション
+      const g=ctx.createLinearGradient(bx,by,bx+CELL,by+CELL);
+      g.addColorStop(0,'#991111');
+      g.addColorStop(0.45,'#ff4433');
+      g.addColorStop(1,'#991111');
+      ctx.fillStyle=g;
+      ctx.fillRect(bx, by, CELL, CELL);
+      // 上・左ハイライト
+      ctx.fillStyle='rgba(255,180,160,0.28)';
+      ctx.fillRect(bx, by, CELL, 3);
+      ctx.fillRect(bx, by, 3, CELL);
+      // 下・右シャドウ
+      ctx.fillStyle='rgba(0,0,0,0.35)';
+      ctx.fillRect(bx, by+CELL-3, CELL, 3);
+      ctx.fillRect(bx+CELL-3, by, 3, CELL);
+    }
+    // 軸ピン（中心）
+    ctx.beginPath(); ctx.arc(0,0,CELL*0.25,0,Math.PI*2);
+    ctx.fillStyle='#ffcc66'; ctx.fill();
+    ctx.beginPath(); ctx.arc(0,0,CELL*0.12,0,Math.PI*2);
+    ctx.fillStyle='#ffffff'; ctx.fill();
+    // 軸の十字線
+    ctx.strokeStyle='rgba(255,200,100,0.5)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(-CELL*0.2,0); ctx.lineTo(CELL*0.2,0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,-CELL*0.2); ctx.lineTo(0,CELL*0.2); ctx.stroke();
+    ctx.restore();
   }
 
   // ゴール（点滅）
