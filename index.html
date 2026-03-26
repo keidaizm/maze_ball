@@ -371,11 +371,10 @@ let particles=[], trail=[];
 let accelEnabled=false;
 let keys={}, drag={active:false,sx:0,sy:0};
 let currentLevelIdx=0;
-let visitedCells=null; // 通過済みセルマップ（2次元配列）
-let warpCooldown=0;    // ワープクールダウン（ms、performance.now基準）
-let trapCooldown=0;    // 落とし穴クールダウン（ms、performance.now基準）
-const WARP_COOLDOWN_MS = 1500; // ワープ後1.5秒は再発動しない
-const TRAP_COOLDOWN_MS = 2000; // 落とし穴後2秒は再発動しない
+let visitedCells=null;
+let warpLocked=false;   // ワープ・落とし穴の判定ロック
+let warpDestCol=-1;     // ワープ先のセル列（-1=未設定）
+let warpDestRow=-1;     // ワープ先のセル行
 const SAVE_KEY='mazeball_save';
 
 function initLevel(def) {
@@ -393,7 +392,7 @@ function initLevel(def) {
   cam.x=ball.x; cam.y=ball.y; cam.zoom=calcFitZoom();
   startTime=performance.now(); elapsed=0;
   particles=[]; trail=[]; grav={x:0,y:0};
-  warpCooldown=0; trapCooldown=0;
+  warpLocked=false; warpDestCol=-1; warpDestRow=-1;
   visitedCells = Array.from({length:rows}, ()=>Array(cols).fill(0));
 
   // ギミック配置（レベル1は少なめ、高レベルほど増加）
@@ -636,43 +635,47 @@ function physicsStep(){
   // 回転壁の角度更新
   for(const rot of level.rotators) rot.angle += rot.speed;
 
-  // ボールのいるセル座標（落とし穴・ワープ共通）
+  // ボールのいるセル座標
   const bc = Math.floor(ball.x/CELL), br = Math.floor(ball.y/CELL);
-  const now = performance.now();
 
-  // 落とし穴判定（時刻ベースクールダウン）
-  if(trapCooldown === 0 || now > trapCooldown){
+  // ワープロック中：ワープ先セルを離れたらロック解除
+  if(warpLocked){
+    if(warpDestCol>=0 && (bc!==warpDestCol || br!==warpDestRow)){
+      warpLocked=false; warpDestCol=-1; warpDestRow=-1;
+    }
+    // ロック中はワープ・落とし穴判定をすべてスキップ
+  } else {
+
+    // 落とし穴判定
     for(const trap of level.traps){
       if(trap.col===bc && trap.row===br){
+        warpLocked=true; warpDestCol=level.start.col; warpDestRow=level.start.row;
         spawnTrapParticles();
-        trapCooldown = now + TRAP_COOLDOWN_MS;
-        // ボールを即座に見えない位置に退避してからスタートへ
         ball.vx=0; ball.vy=0;
+        // 300ms後にスタートへ移動（即移動すると落下演出が見えない）
         setTimeout(()=>{
           if(!level) return;
           ball.x=(level.start.col+0.5)*CELL;
           ball.y=(level.start.row+0.5)*CELL;
-          ball.vx=0; ball.vy=0;
-          trail=[];
+          ball.vx=0; ball.vy=0; trail=[];
         }, 300);
         break;
       }
     }
-  }
 
-  // ワープ判定（時刻ベースクールダウン）
-  if(trapCooldown === 0 || now > trapCooldown){ // 落とし穴直後はワープも無効
-    if(warpCooldown === 0 || now > warpCooldown){
+    // ワープ判定
+    if(!warpLocked){
       for(const warp of level.warps){
         let dest=null;
         if(warp.a.col===bc && warp.a.row===br) dest=warp.b;
         else if(warp.b.col===bc && warp.b.row===br) dest=warp.a;
         if(dest){
+          warpLocked=true;
+          warpDestCol=dest.col; warpDestRow=dest.row;
           ball.x=(dest.col+0.5)*CELL;
           ball.y=(dest.row+0.5)*CELL;
           ball.vx=0; ball.vy=0; trail=[];
           spawnWarpParticles(warp.color);
-          warpCooldown = now + WARP_COOLDOWN_MS;
           break;
         }
       }
