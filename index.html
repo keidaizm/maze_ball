@@ -372,9 +372,10 @@ let accelEnabled=false;
 let keys={}, drag={active:false,sx:0,sy:0};
 let currentLevelIdx=0;
 let visitedCells=null;
-let warpLocked=false;   // ワープ・落とし穴の判定ロック
-let warpDestCol=-1;     // ワープ先のセル列（-1=未設定）
-let warpDestRow=-1;     // ワープ先のセル行
+let warpLocked=false;
+let warpDestCol=-1;
+let warpDestRow=-1;
+let warpJustActivated=false; // 発動した直後のフレームはロック解除しない
 const SAVE_KEY='mazeball_save';
 
 function initLevel(def) {
@@ -392,7 +393,7 @@ function initLevel(def) {
   cam.x=ball.x; cam.y=ball.y; cam.zoom=calcFitZoom();
   startTime=performance.now(); elapsed=0;
   particles=[]; trail=[]; grav={x:0,y:0};
-  warpLocked=false; warpDestCol=-1; warpDestRow=-1;
+  warpLocked=false; warpDestCol=-1; warpDestRow=-1; warpJustActivated=false;
   visitedCells = Array.from({length:rows}, ()=>Array(cols).fill(0));
 
   // ギミック配置（レベル1は少なめ、高レベルほど増加）
@@ -433,17 +434,16 @@ function placeTrapAndWarps(cols, rows, grid, difficulty) {
   used.add(`${level.start.col},${level.start.row}`);
   used.add(`${level.goal.col},${level.goal.row}`);
 
-  // 行き止まりセルを取得（落とし穴・ワープ用）
+  // 行き止まりセルを取得（落とし穴用）
   const deadEnds = findDeadEnds(cols, rows, grid);
-  let deIdx = 0; // 使用インデックス
-
+  let deIdx = 0;
   function nextDeadEnd() {
     while(deIdx < deadEnds.length){
       const p = deadEnds[deIdx++];
       const key = `${p.col},${p.row}`;
       if(!used.has(key)){ used.add(key); return p; }
     }
-    return null; // 行き止まりが足りない場合はnull
+    return null;
   }
 
   // 落とし穴（行き止まりに設置）
@@ -453,44 +453,37 @@ function placeTrapAndWarps(cols, rows, grid, difficulty) {
     if(pos) level.traps.push(pos);
   }
 
-  // ワープペア（行き止まりにペアで設置）
+  // ワープペア（行き止まりに設置・必須なし）
   const warpColors = ['#ff44aa','#44ffcc','#ffaa00','#aa44ff'];
-  const warpCount = [1,2,3,4][difficulty];
-  for(let i=0;i<warpCount;i++){
-    const a = nextDeadEnd();
-    const b = nextDeadEnd();
-    if(a&&b) level.warps.push({a, b, color: warpColors[i], id:i});
+  const warpCount  = [1,2,3,4][difficulty];
+  for(let wi=0;wi<warpCount;wi++){
+    const a = nextDeadEnd(), b = nextDeadEnd();
+    if(a&&b) level.warps.push({a, b, color:warpColors[wi], id:wi, mandatory:false});
   }
 
   // 回転壁：Lv3以上のみ、速度固定
-  const rotCount = [0, 0, 2, 3][difficulty];
+  const rotCount  = [0, 0, 2, 3][difficulty];
   const ROT_SPEED = 0.6 * Math.PI / 180;
 
   for(let i=0;i<rotCount;i++){
     let placed=false, tries=0;
     while(!placed && tries++<400){
-      // 中心候補（端から3マス以上内側）
       const cc = 3+Math.floor(Math.random()*(cols-6));
       const cr = 3+Math.floor(Math.random()*(rows-6));
-      // スタート・ゴール付近は除外
       if(Math.abs(cc-level.start.col)<6 && Math.abs(cr-level.start.row)<6) continue;
       if(Math.abs(cc-level.goal.col)<6  && Math.abs(cr-level.goal.row)<6)  continue;
-      // 他の回転壁と近すぎる場合は除外
       let tooClose=false;
       for(const r of level.rotators){
         if(Math.abs(cc-r.col)<5 && Math.abs(cr-r.row)<5){ tooClose=true; break; }
       }
       if(tooClose) continue;
-      // 3×3エリアがusedに含まれていないことを確認
       let ok=true;
       for(let dr=-1;dr<=1&&ok;dr++) for(let dc=-1;dc<=1&&ok;dc++){
         if(used.has(`${cc+dc},${cr+dr}`)) ok=false;
       }
       if(!ok) continue;
-
-      // ✅ 配置決定：3×3エリアを強制的に通路に開ける
       for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
-        grid[cr+dr][cc+dc] = 0; // 壁を通路に変換
+        grid[cr+dr][cc+dc] = 0;
         used.add(`${cc+dc},${cr+dr}`);
       }
       level.rotators.push({ col:cc, row:cr, angle:Math.random()*Math.PI*2, speed: ROT_SPEED });
@@ -638,27 +631,28 @@ function physicsStep(){
   // ボールのいるセル座標
   const bc = Math.floor(ball.x/CELL), br = Math.floor(ball.y/CELL);
 
-  // ワープロック中：ワープ先セルを離れたらロック解除
   if(warpLocked){
-    if(warpDestCol>=0 && (bc!==warpDestCol || br!==warpDestRow)){
+    if(warpJustActivated){
+      // 発動直後フレームは解除しない（次フレームから監視）
+      warpJustActivated=false;
+    } else if(bc!==warpDestCol || br!==warpDestRow){
+      // ワープ先・スタートセルから離れたらロック解除
       warpLocked=false; warpDestCol=-1; warpDestRow=-1;
     }
-    // ロック中はワープ・落とし穴判定をすべてスキップ
   } else {
 
     // 落とし穴判定
     for(const trap of level.traps){
       if(trap.col===bc && trap.row===br){
-        warpLocked=true; warpDestCol=level.start.col; warpDestRow=level.start.row;
         spawnTrapParticles();
-        ball.vx=0; ball.vy=0;
-        // 300ms後にスタートへ移動（即移動すると落下演出が見えない）
-        setTimeout(()=>{
-          if(!level) return;
-          ball.x=(level.start.col+0.5)*CELL;
-          ball.y=(level.start.row+0.5)*CELL;
-          ball.vx=0; ball.vy=0; trail=[];
-        }, 300);
+        // 即スタートへ戻す（setTimeout不使用）
+        ball.x=(level.start.col+0.5)*CELL;
+        ball.y=(level.start.row+0.5)*CELL;
+        ball.vx=0; ball.vy=0; trail=[];
+        warpLocked=true;
+        warpJustActivated=true;
+        warpDestCol=level.start.col;
+        warpDestRow=level.start.row;
         break;
       }
     }
@@ -670,12 +664,14 @@ function physicsStep(){
         if(warp.a.col===bc && warp.a.row===br) dest=warp.b;
         else if(warp.b.col===bc && warp.b.row===br) dest=warp.a;
         if(dest){
-          warpLocked=true;
-          warpDestCol=dest.col; warpDestRow=dest.row;
           ball.x=(dest.col+0.5)*CELL;
           ball.y=(dest.row+0.5)*CELL;
           ball.vx=0; ball.vy=0; trail=[];
           spawnWarpParticles(warp.color);
+          warpLocked=true;
+          warpJustActivated=true;
+          warpDestCol=dest.col;
+          warpDestRow=dest.row;
           break;
         }
       }
@@ -895,25 +891,16 @@ function drawScene(){
     if(tx<wx0-CELL||tx>wx1+CELL||ty<wy0-CELL||ty>wy1+CELL) continue;
     const cx=tx+CELL/2, cy=ty+CELL/2;
     // 黒い穴の背景
-    ctx.fillStyle='#000008';
-    ctx.fillRect(tx,ty,CELL,CELL);
-    // 警告の黄黒ボーダー
-    const stripeW=CELL*0.18;
-    const stripes=['#ffcc00','#111111'];
-    for(let s=0;s<4;s++){
-      ctx.fillStyle=stripes[s%2];
-      ctx.fillRect(tx+s*stripeW, ty, stripeW, CELL*0.12);         // 上
-      ctx.fillRect(tx+s*stripeW, ty+CELL*0.88, stripeW, CELL*0.12); // 下
-      ctx.fillRect(tx,          ty+s*stripeW, CELL*0.12, stripeW); // 左
-      ctx.fillRect(tx+CELL*0.88,ty+s*stripeW, CELL*0.12, stripeW); // 右
-    }
-    // 穴の渦巻き（同心円）
-    for(let ri=3;ri>=1;ri--){
-      ctx.beginPath();
-      ctx.arc(cx,cy,CELL*0.15*ri,0,Math.PI*2);
-      ctx.strokeStyle=`rgba(80,40,40,${0.15*ri})`;
-      ctx.lineWidth=1; ctx.stroke();
-    }
+    ctx.fillStyle='#000008'; ctx.fillRect(tx,ty,CELL,CELL);
+    // 細かい点線の警告枠（setLineDash使用）
+    const dotSize = Math.max(1.5, CELL*0.06);
+    ctx.setLineDash([dotSize, dotSize]);
+    ctx.lineDashOffset = (performance.now()*0.03) % (dotSize*2); // アニメ
+    ctx.strokeStyle='#ffcc00';
+    ctx.lineWidth = Math.max(1, CELL*0.07);
+    const m = CELL*0.08; // マージン
+    ctx.strokeRect(tx+m, ty+m, CELL-m*2, CELL-m*2);
+    ctx.setLineDash([]); ctx.lineDashOffset=0;
     // 中心の暗い円
     const gTrap=ctx.createRadialGradient(cx,cy,0,cx,cy,CELL*0.38);
     gTrap.addColorStop(0,'rgba(0,0,0,0.95)');
@@ -931,7 +918,8 @@ function drawScene(){
   // ワープ（ペアで色を合わせた点滅円）
   for(const warp of level.warps){
     const pulse=0.6+0.4*Math.sin(performance.now()*0.006+warp.id*1.5);
-    for(const pos of [warp.a, warp.b]){
+    for(let pi=0;pi<2;pi++){
+      const pos = pi===0 ? warp.a : warp.b;
       const wx_=pos.col*CELL+CELL/2, wy_=pos.row*CELL+CELL/2;
       if(wx_<wx0||wx_>wx1||wy_<wy0||wy_>wy1) continue;
       const gw=ctx.createRadialGradient(wx_,wy_,0,wx_,wy_,CELL*0.5);
