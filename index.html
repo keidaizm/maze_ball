@@ -372,8 +372,10 @@ let accelEnabled=false;
 let keys={}, drag={active:false,sx:0,sy:0};
 let currentLevelIdx=0;
 let visitedCells=null; // 通過済みセルマップ（2次元配列）
-let warpCooldown=0;    // ワープクールダウン（フレーム数）
-let trapCooldown=0;    // 落とし穴クールダウン（フレーム数）
+let warpCooldown=0;    // ワープクールダウン（ms、performance.now基準）
+let trapCooldown=0;    // 落とし穴クールダウン（ms、performance.now基準）
+const WARP_COOLDOWN_MS = 1500; // ワープ後1.5秒は再発動しない
+const TRAP_COOLDOWN_MS = 2000; // 落とし穴後2秒は再発動しない
 const SAVE_KEY='mazeball_save';
 
 function initLevel(def) {
@@ -636,16 +638,18 @@ function physicsStep(){
 
   // ボールのいるセル座標（落とし穴・ワープ共通）
   const bc = Math.floor(ball.x/CELL), br = Math.floor(ball.y/CELL);
+  const now = performance.now();
 
-  // 落とし穴判定（クールダウン中はスキップ）
-  if(trapCooldown > 0){
-    trapCooldown--;
-  } else {
+  // 落とし穴判定（時刻ベースクールダウン）
+  if(trapCooldown === 0 || now > trapCooldown){
     for(const trap of level.traps){
       if(trap.col===bc && trap.row===br){
         spawnTrapParticles();
-        trapCooldown=120; // 約2秒間無効
+        trapCooldown = now + TRAP_COOLDOWN_MS;
+        // ボールを即座に見えない位置に退避してからスタートへ
+        ball.vx=0; ball.vy=0;
         setTimeout(()=>{
+          if(!level) return;
           ball.x=(level.start.col+0.5)*CELL;
           ball.y=(level.start.row+0.5)*CELL;
           ball.vx=0; ball.vy=0;
@@ -656,21 +660,21 @@ function physicsStep(){
     }
   }
 
-  // ワープ判定（クールダウン中はスキップ）
-  if(warpCooldown > 0){
-    warpCooldown--;
-  } else {
-    for(const warp of level.warps){
-      let dest=null;
-      if(warp.a.col===bc && warp.a.row===br) dest=warp.b;
-      else if(warp.b.col===bc && warp.b.row===br) dest=warp.a;
-      if(dest){
-        ball.x=(dest.col+0.5)*CELL;
-        ball.y=(dest.row+0.5)*CELL;
-        ball.vx=0; ball.vy=0; trail=[];
-        spawnWarpParticles(warp.color);
-        warpCooldown=90; // 約1.5秒間ワープ無効（60fps基準）
-        break;
+  // ワープ判定（時刻ベースクールダウン）
+  if(trapCooldown === 0 || now > trapCooldown){ // 落とし穴直後はワープも無効
+    if(warpCooldown === 0 || now > warpCooldown){
+      for(const warp of level.warps){
+        let dest=null;
+        if(warp.a.col===bc && warp.a.row===br) dest=warp.b;
+        else if(warp.b.col===bc && warp.b.row===br) dest=warp.a;
+        if(dest){
+          ball.x=(dest.col+0.5)*CELL;
+          ball.y=(dest.row+0.5)*CELL;
+          ball.vx=0; ball.vy=0; trail=[];
+          spawnWarpParticles(warp.color);
+          warpCooldown = now + WARP_COOLDOWN_MS;
+          break;
+        }
       }
     }
   }
